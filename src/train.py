@@ -15,7 +15,8 @@ import torch.nn as nn
 import torchvision
 from torch.utils.data import DataLoader
 
-from network import U_Net, AttU_Net
+from network_unet import U_Net, AttU_Net
+from network_hed import HED, SimpleCNNBackbone
 
 import utils
 
@@ -160,6 +161,9 @@ def initialize_model(args, lr):
         model = U_Net(n_bands, out_channels)
     elif args.model_type == "ATTUNET":
         model = AttU_Net(n_bands, out_channels)
+    elif args.model_type == "HED":
+        backbone = SimpleCNNBackbone(in_channels=n_bands)
+        model = HED(backbone=backbone, out_channels=out_channels)
     else:
         raise ValueError("Unsupported model type")
 
@@ -180,6 +184,16 @@ def initialize_model(args, lr):
 
     return model, optimizer, criterion
 
+def compute_loss(output, target, criterion):
+    """Compute the loss for the model"""
+    if isinstance(output, list):
+        # If the model outputs a list of side outputs (i.e. HED)
+        loss = sum(criterion(out, target) for out in output)
+    else:
+        # If the model outputs a single tensor (i.e. UNET)
+        loss = criterion(output, target)
+    return loss
+
 
 def train_one_epoch(model, train_loader, criterion, optimizer, device):
     """Train the model for one epoch"""
@@ -192,7 +206,8 @@ def train_one_epoch(model, train_loader, criterion, optimizer, device):
         optimizer.zero_grad()
         output = model(images)
 
-        loss = criterion(output, target)
+        loss = compute_loss(output, target, criterion)
+        
         loss.backward()
         optimizer.step()
 
@@ -206,7 +221,7 @@ def evaluate_model(model, valid_loader, criterion, device):
             images = images.to(device)
             target = target.to(device).float()
             output = model(images)
-            valid_loss += criterion(output, target).item()
+            valid_loss += compute_loss(output, target, criterion).item()
 
     return valid_loss / len(valid_loader)
 
