@@ -19,23 +19,36 @@ class SideOutput(nn.Module):
         return x
 
 class HED(nn.Module):
-    def __init__(self, backbone, out_channels=1):
+    def __init__(self, backbone, out_channels=1, input_channels=4, input_size=(144, 144), freeze_backbone=False):
         super().__init__()
         self.backbone = backbone
 
-        # Select which layers of the backbone to tap
-        self.side1 = SideOutput(in_channels=64,out_channels=out_channels)   # example
-        self.side2 = SideOutput(in_channels=128,out_channels=out_channels)
-        self.side3 = SideOutput(in_channels=256,out_channels=out_channels)
-        self.side4 = SideOutput(in_channels=512,out_channels=out_channels)
-        self.side5 = SideOutput(in_channels=512,out_channels=out_channels)
+        # Optionally freeze backbone parameters
+        if freeze_backbone:
+            for param in self.backbone.parameters():
+                param.requires_grad = False
+            print("\n✅ Backbone has been frozen.\n")
+
+        # Do a dry forward pass to detect channel sizes
+        with torch.no_grad():
+            dummy_input = torch.randn(1, input_channels, *input_size)
+            features = backbone(dummy_input)
+            self.side_channels = [f.shape[1] for f in features]
+
+        print(f"\nSide channels: {self.side_channels}")
+
+        # Create side output blocks with correct input channels
+        self.side1 = SideOutput(in_channels=self.side_channels[0], out_channels=out_channels)
+        self.side2 = SideOutput(in_channels=self.side_channels[1], out_channels=out_channels)
+        self.side3 = SideOutput(in_channels=self.side_channels[2], out_channels=out_channels)
+        self.side4 = SideOutput(in_channels=self.side_channels[3], out_channels=out_channels)
+        self.side5 = SideOutput(in_channels=self.side_channels[4], out_channels=out_channels)
 
         self.fuse = nn.Conv2d(5, 1, kernel_size=1)
 
     def forward(self, x):
         H, W = x.shape[2:]
 
-        # Forward through backbone
         c1, c2, c3, c4, c5 = self.backbone(x)
 
         s1 = self.side1(c1, (H, W))
@@ -44,7 +57,6 @@ class HED(nn.Module):
         s4 = self.side4(c4, (H, W))
         s5 = self.side5(c5, (H, W))
 
-        # Concatenate side outputs
         fused = self.fuse(torch.cat([s1, s2, s3, s4, s5], dim=1))
 
         return [s1, s2, s3, s4, s5, fused]
@@ -97,67 +109,44 @@ class SimpleCNNBackbone(nn.Module):
         return [out1, out2, out3, out4, out5]
 
 
+from torchvision.models import efficientnet_b0, EfficientNet_B0_Weights
+from torchvision.models.feature_extraction import create_feature_extractor
 
+class EfficientNetBackbone(nn.Module):
+    def __init__(self, in_channels=3):
+        super(EfficientNetBackbone, self).__init__()
 
-class HED_EfficientNet(nn.Module):
-    def __init__(self, pretrained=True, custom_ckpt_path=None):
-        super(HED_EfficientNet, self).__init__()
+        # Load pretrained EfficientNet-B0
+        weights = EfficientNet_B0_Weights.DEFAULT
+        backbone = efficientnet_b0(weights=weights)
 
-        # Load EfficientNet-B7
-        if pretrained:
-            backbone = efficientnet_b7(weights=EfficientNet_B7_Weights.IMAGENET1K_V1)
-        else:
-            backbone = efficientnet_b7(weights=None)
+        # Replace the first conv layer if input channels ≠ 3
+        if in_channels != 3:
+            old_conv = backbone.features[0][0]
+            new_conv = nn.Conv2d(in_channels, old_conv.out_channels, kernel_size=old_conv.kernel_size,
+                                 stride=old_conv.stride, padding=old_conv.padding, bias=old_conv.bias is not None)
+            with torch.no_grad():
+                if in_channels == 1:
+                    new_conv.weight[:] = old_conv.weight.mean(dim=1, keepdim=True)
+                elif in_channels > 3:
+                    new_conv.weight[:] = old_conv.weight.mean(dim=1, keepdim=True).repeat(1, in_channels, 1, 1) / in_channels
+                else:
+                    new_conv.weight[:, :in_channels] = old_conv.weight[:, :in_channels]
+            backbone.features[0][0] = new_conv
 
-        if custom_ckpt_path:
-            state_dict = torch.load(custom_ckpt_path, map_location='cpu')
-            backbone.load_state_dict(state_dict)
+        # Define return nodes (you can inspect them with: `print(backbone)`)
+        return_nodes = {
+            'features.1': 'out1',  # early low-level
+            'features.2': 'out2',
+            'features.4': 'out3',
+            'features.5': 'out4',
+            'features.7': 'out5',  # deepest features
+        }
 
-        self.backbone = backbone.features  # Only the feature extractor part
-
-        # Define the intermediate layers for deep supervision
-        self.side_layers = nn.ModuleList([
-            nn.Conv2d(32, 1, kernel_size=1),    # Stage 1
-            nn.Conv2d(48, 1, kernel_size=1),    # Stage 2
-            nn.Conv2d(80, 1, kernel_size=1),    # Stage 3
-            nn.Conv2d(224, 1, kernel_size=1),   # Stage 4
-            nn.Conv2d(640, 1, kernel_size=1),   # Stage 5
-        ])
-
-        self.upsample = nn.Upsample(scale_factor=2, mode='bilinear', align_corners=False)
-        self.final_fuse = nn.Conv2d(5, 1, kernel_size=1)  # Fuse all side outputs
+        # Create extractor
+        self.backbone = create_feature_extractor(backbone, return_nodes=return_nodes)
 
     def forward(self, x):
-        side_outputs = []
-        h = x
-
-        # Stage 1
-        h = self.backbone[0](h)
-        side_outputs.append(self.side_layers[0](h))
-
-        # Stage 2
-        h = self.backbone[1](h)
-        side_outputs.append(self.side_layers[1](h))
-
-        # Stage 3
-        h = self.backbone[2](h)
-        h = self.backbone[3](h)
-        side_outputs.append(self.side_layers[2](h))
-
-        # Stage 4
-        h = self.backbone[4](h)
-        h = self.backbone[5](h)
-        side_outputs.append(self.side_layers[3](h))
-
-        # Stage 5
-        h = self.backbone[6](h)
-        h = self.backbone[7](h)
-        side_outputs.append(self.side_layers[4](h))
-
-        # Upsample all to input size
-        side_outputs = [self.upsample(self.upsample(out)) for out in side_outputs]
-
-        # Concatenate side outputs and fuse
-        fuse = self.final_fuse(torch.cat(side_outputs, dim=1))
-
-        return fuse, side_outputs
+        features = self.backbone(x)
+        return [features['out1'], features['out2'], features['out3'],
+                features['out4'], features['out5']]

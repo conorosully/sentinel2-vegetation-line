@@ -16,7 +16,7 @@ import torchvision
 from torch.utils.data import DataLoader
 
 from network_unet import U_Net, AttU_Net
-from network_hed import HED, SimpleCNNBackbone
+from network_hed import HED, SimpleCNNBackbone, EfficientNetBackbone
 
 import utils
 
@@ -29,6 +29,8 @@ def main():
     parser.add_argument("--model_name", type=str, help="Name of the model to train")
     parser.add_argument("--sample", action="store_true", help="Whether to use a sample dataset")
     parser.add_argument("--model_type", type=str, default="UNET", help="Type of model to train")
+    parser.add_argument("--backbone", type=str, default="SimpleCNN", help="Backbone for the model (if applicable)",choices=["SimpleCNN", "ImageNet"])
+    parser.add_argument("--freeze_backbone", action="store_true", help="Whether to freeze the backbone parameters")
     parser.add_argument("--batch_size", type=int, default=32, help="Batch size for training")
     parser.add_argument("--epochs", type=int, default=50, help="Number of epochs to train for")
     #parser.add_argument("--loss", type=str, default="BCEWithLogitsLoss", help="Loss function to use")
@@ -55,7 +57,7 @@ def main():
     data_sense_check(train_loader)
 
     # Train the model
-    for loss in ["BCE","wBCE","DICE"]:
+    for loss in ["wBCE","DICE"]:
         print(f"\n--- Training with Loss: {loss} ---")
         args.loss = loss
         train_model(train_loader, valid_loader, args)
@@ -79,7 +81,7 @@ def data_sense_check(loader):
 
 # Classes
 class TrainDataset(torch.utils.data.Dataset):
-    def __init__(self, paths, args):
+    def __init__(self, paths):
         self.paths = paths
 
     def __getitem__(self, idx):
@@ -128,8 +130,8 @@ def load_data(args):
 
     # Create datasets
     split = int(args.split * len(paths))
-    train_data = TrainDataset(paths[:split], args)
-    valid_data = TrainDataset(paths[split:], args)
+    train_data = TrainDataset(paths[:split])
+    valid_data = TrainDataset(paths[split:])
 
     # Prepare data for PyTorch model
     train_loader = DataLoader(train_data, batch_size=args.batch_size, shuffle=True)
@@ -162,7 +164,12 @@ def initialize_model(args, lr):
     elif args.model_type == "ATTUNET":
         model = AttU_Net(n_bands, out_channels)
     elif args.model_type == "HED":
-        backbone = SimpleCNNBackbone(in_channels=n_bands)
+
+        if args.backbone == "SimpleCNN":
+            backbone = SimpleCNNBackbone(in_channels=n_bands)
+        elif args.backbone == "ImageNet":
+            backbone = EfficientNetBackbone(in_channels=n_bands)
+        
         model = HED(backbone=backbone, out_channels=out_channels)
     else:
         raise ValueError("Unsupported model type")
@@ -248,7 +255,9 @@ def train_model(train_loader, valid_loader, args):
             print(f"Validation Loss: {valid_loss:.5f}")
 
             if valid_loss < global_min_loss:
-                save_path = os.path.join(args.save_path, f"{args.model_name}_{args.model_type}_{args.loss}.pth")
+                # Save the model with the best validation loss across all learning rates
+                model_name = f"{args.model_name}_{args.model_type}_{args.backbone}_{args.freeze_backbone}_{args.loss}.pth"
+                save_path = os.path.join(args.save_path, model_name)
                 torch.save(model.state_dict(), save_path)
                 print("Model saved (best across all LRs).")
                 global_min_loss = valid_loss
