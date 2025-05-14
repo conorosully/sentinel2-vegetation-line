@@ -27,7 +27,9 @@ class HED(nn.Module):
         if freeze_backbone:
             for param in self.backbone.parameters():
                 param.requires_grad = False
-            print("\n✅ Backbone has been frozen.\n")
+            print("\nBackbone has been frozen.")
+        else:
+            print("\nBackbone is trainable.")
 
         # Do a dry forward pass to detect channel sizes
         with torch.no_grad():
@@ -35,7 +37,7 @@ class HED(nn.Module):
             features = backbone(dummy_input)
             self.side_channels = [f.shape[1] for f in features]
 
-        print(f"\nSide channels: {self.side_channels}")
+        print(f"Side channels: {self.side_channels}\n")
 
         # Create side output blocks with correct input channels
         self.side1 = SideOutput(in_channels=self.side_channels[0], out_channels=out_channels)

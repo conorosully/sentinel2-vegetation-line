@@ -170,7 +170,8 @@ def initialize_model(args, lr):
         elif args.backbone == "ImageNet":
             backbone = EfficientNetBackbone(in_channels=n_bands)
         
-        model = HED(backbone=backbone, out_channels=out_channels)
+        model = HED(backbone=backbone, out_channels=out_channels,
+                                        freeze_backbone=args.freeze_backbone)
     else:
         raise ValueError("Unsupported model type")
 
