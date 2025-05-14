@@ -16,7 +16,7 @@ import torchvision
 from torch.utils.data import DataLoader
 
 from network_unet import U_Net, AttU_Net
-from network_hed import HED, SimpleCNNBackbone, EfficientNetBackbone
+from network_hed import HED, SimpleCNNBackbone, ResNet50Backbone
 
 import utils
 
@@ -29,7 +29,7 @@ def main():
     parser.add_argument("--model_name", type=str, help="Name of the model to train")
     parser.add_argument("--sample", action="store_true", help="Whether to use a sample dataset")
     parser.add_argument("--model_type", type=str, default="UNET", help="Type of model to train")
-    parser.add_argument("--backbone", type=str, default="SimpleCNN", help="Backbone for the model (if applicable)",choices=["SimpleCNN", "ImageNet"])
+    parser.add_argument("--backbone_dataset", type=str, default="SimpleCNN", help="Backbone for the model (if applicable)",choices=["SimpleCNN", "ImageNet","BigEarthNet"])
     parser.add_argument("--freeze_backbone", action="store_true", help="Whether to freeze the backbone parameters")
     parser.add_argument("--batch_size", type=int, default=32, help="Batch size for training")
     parser.add_argument("--epochs", type=int, default=50, help="Number of epochs to train for")
@@ -60,7 +60,14 @@ def main():
     for loss in ["wBCE","DICE"]:
         print(f"\n--- Training with Loss: {loss} ---")
         args.loss = loss
-        train_model(train_loader, valid_loader, args)
+
+        if args.backbone_dataset == "SimpleCNN":
+            train_model(train_loader, valid_loader, args)
+        else:
+            for freeze in [True, False]:
+                print(f"\n--- Training with Freeze Backbone: {freeze} ---")
+                args.freeze_backbone = freeze
+                train_model(train_loader, valid_loader, args)
     
 
 def data_sense_check(loader):
@@ -165,13 +172,16 @@ def initialize_model(args, lr):
         model = AttU_Net(n_bands, out_channels)
     elif args.model_type == "HED":
 
-        if args.backbone == "SimpleCNN":
+        if args.backbone_dataset == "SimpleCNN":
             backbone = SimpleCNNBackbone(in_channels=n_bands)
-        elif args.backbone == "ImageNet":
-            backbone = EfficientNetBackbone(in_channels=n_bands)
-        
-        model = HED(backbone=backbone, out_channels=out_channels,
+        else:
+            # Use ResNet50 backbone for ImageNet or BigEarthNet
+            backbone = ResNet50Backbone(in_channels=n_bands,
+                                        backbone_dataset=args.backbone_dataset,
                                         freeze_backbone=args.freeze_backbone)
+ 
+        model = HED(backbone=backbone, 
+                    out_channels=out_channels)
     else:
         raise ValueError("Unsupported model type")
 
@@ -257,7 +267,7 @@ def train_model(train_loader, valid_loader, args):
 
             if valid_loss < global_min_loss:
                 # Save the model with the best validation loss across all learning rates
-                model_name = f"{args.model_name}_{args.model_type}_{args.backbone}_{args.freeze_backbone}_{args.loss}.pth"
+                model_name = f"{args.model_name}_{args.model_type}_{args.backbone_dataset}_{args.freeze_backbone}_{args.loss}.pth"
                 save_path = os.path.join(args.save_path, model_name)
                 torch.save(model.state_dict(), save_path)
                 print("Model saved (best across all LRs).")

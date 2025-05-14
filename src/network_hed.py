@@ -1,12 +1,15 @@
-import torch
-import torch.nn as nn
-import torchvision.models as models
-from torchvision.models import efficientnet_b7, EfficientNet_B7_Weights
-
 
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
+
+from torchvision.models import resnet50, ResNet50_Weights
+from torchvision.models import efficientnet_b0, EfficientNet_B0_Weights
+from torchvision.models.feature_extraction import create_feature_extractor
+
+from reben_publication.BigEarthNetv2_0_ImageClassifier import BigEarthNetv2_0_ImageClassifier
+
+import warnings
 
 class SideOutput(nn.Module):
     def __init__(self, in_channels,out_channels):
@@ -19,17 +22,10 @@ class SideOutput(nn.Module):
         return x
 
 class HED(nn.Module):
-    def __init__(self, backbone, out_channels=1, input_channels=4, input_size=(144, 144), freeze_backbone=False):
+    def __init__(self, backbone, out_channels=1, input_channels=4, input_size=(144, 144)):
         super().__init__()
         self.backbone = backbone
 
-        # Optionally freeze backbone parameters
-        if freeze_backbone:
-            for param in self.backbone.parameters():
-                param.requires_grad = False
-            print("\nBackbone has been frozen.")
-        else:
-            print("\nBackbone is trainable.")
 
         # Do a dry forward pass to detect channel sizes
         with torch.no_grad():
@@ -109,10 +105,136 @@ class SimpleCNNBackbone(nn.Module):
         out4 = self.stage4(out3)  # [B, 512, H/8, W/8]
         out5 = self.stage5(out4)  # [B, 512, H/16, W/16]
         return [out1, out2, out3, out4, out5]
+    
+def get_ResNet50_BigEarthNet():
+
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore", UserWarning)
+        backbone = BigEarthNetv2_0_ImageClassifier.from_pretrained(
+        "BIFOLD-BigEarthNetv2-0/resnet50-s2-v0.2.0"
+        )
+    
+    backbone = backbone.model.vision_encoder
+
+    in_channels = 4  # Blue, Green, Red, NIR
+
+    # Replace the first convolutional layer
+    old_conv = backbone.conv1
+    new_conv = nn.Conv2d(
+        in_channels=4,
+        out_channels=old_conv.out_channels,
+        kernel_size=old_conv.kernel_size,
+        stride=old_conv.stride,
+        padding=old_conv.padding,
+        bias=False  # BigEarthNet models use bias=False
+    )
+
+    with torch.no_grad():
+        # ResNet conv1 expects [R, G, B] channel order
+        # We'll map NIR to the average of RGB filters (or initialize it smartly)
+        #see https://huggingface.co/BIFOLD-BigEarthNetv2-0 for band order
+        new_conv.weight[:, 0] = old_conv.weight[:, 0]  # Blue (B2)
+        new_conv.weight[:, 1] = old_conv.weight[:, 1]  # Green (B3)
+        new_conv.weight[:, 2] = old_conv.weight[:, 2]  # Red (B4) 
+        new_conv.weight[:, 3] = old_conv.weight[:, 6]  # NIR (B8)
+
+    backbone.conv1 = new_conv
+
+    return_nodes = {
+        'act1': 'out1',           # after initial conv + BN + ReLU
+        'layer1': 'out2',         # low-level features
+        'layer2': 'out3',
+        'layer3': 'out4',
+        'layer4': 'out5'          # deepest features
+    }
+
+    return return_nodes, backbone
+
+    
+
+def get_ResNet50_ImageNet():
+    """
+    Load a pretrained ResNet-50 model and modify the first conv layer 
+    to accept 4 channels (BGR + NIR).
+    """
+    
+    # Load pretrained ResNet-50
+    weights = ResNet50_Weights.DEFAULT
+    backbone = resnet50(weights=weights)
+
+    # Modify the first conv layer if needed
+
+    in_channels = 4  # Blue, Green, Red, NIR
+
+    # Replace the first convolutional layer
+    old_conv = backbone.conv1
+    new_conv = nn.Conv2d(
+        in_channels=in_channels,
+        out_channels=old_conv.out_channels,
+        kernel_size=old_conv.kernel_size,
+        stride=old_conv.stride,
+        padding=old_conv.padding,
+        bias=old_conv.bias is not None,
+    )
+
+    with torch.no_grad():
+        # ResNet conv1 expects [R, G, B] channel order
+        # We'll map NIR to the average of RGB filters (or initialize it smartly)
+        new_conv.weight[:, 0] = old_conv.weight[:, 2]  # Blue  <- ResNet Blue (channel 2)
+        new_conv.weight[:, 1] = old_conv.weight[:, 1]  # Green <- ResNet Green (channel 1)
+        new_conv.weight[:, 2] = old_conv.weight[:, 0]  # Red   <- ResNet Red (channel 0)
+        new_conv.weight[:, 3] = old_conv.weight.mean(dim=1)  # NIR  <- Avg(RGB) as a proxy
 
 
-from torchvision.models import efficientnet_b0, EfficientNet_B0_Weights
-from torchvision.models.feature_extraction import create_feature_extractor
+    backbone.conv1 = new_conv
+
+    # Define return nodes
+    return_nodes = {
+        'relu': 'out1',           # after initial conv + BN + ReLU
+        'layer1': 'out2',         # low-level features
+        'layer2': 'out3',
+        'layer3': 'out4',
+        'layer4': 'out5'          # deepest features
+    }
+
+    return return_nodes, backbone
+    
+
+class ResNet50Backbone(nn.Module):
+    def __init__(self, in_channels=3,backbone_dataset='ImageNet', freeze_backbone=False):
+        super(ResNet50Backbone, self).__init__()
+
+        if backbone_dataset == 'ImageNet':
+             print("\nUsing ImageNet pretrained ResNet-50")
+             return_nodes, backbone = get_ResNet50_ImageNet()
+        elif backbone_dataset == 'BigEarthNet':
+            print("\nUsing BigEarthNet pretrained ResNet-50")
+            return_nodes, backbone = get_ResNet50_BigEarthNet()
+        else:
+            print("\nUsing SimpleCNN backbone")
+             
+         # Optionally freeze backbone parameters
+        if freeze_backbone:
+            for param in backbone.parameters():
+                param.requires_grad = False
+            # Unfreeze the first conv layer as it has been modified
+            for param in backbone.conv1.parameters():
+                param.requires_grad = True
+            print("Backbone has been frozen.")
+        else:
+            print("Backbone is trainable.")
+
+        # Create extractor
+        with warnings.catch_warnings():
+            warnings.simplefilter("ignore", UserWarning)
+            self.backbone = create_feature_extractor(backbone, return_nodes=return_nodes)
+
+    def forward(self, x):
+        features = self.backbone(x)
+        return [features['out1'], features['out2'], features['out3'],
+                features['out4'], features['out5']]
+
+
 
 class EfficientNetBackbone(nn.Module):
     def __init__(self, in_channels=3):
