@@ -86,9 +86,8 @@ def stack_10m_bands(safe_dir):
     stacked_array = np.stack(stacked_bands, axis=0)
     return stacked_array, reference_raster
 
-def stack_crop_resample_index(safe_dir, output_tif, utm=None,resampling_factor=1):
-    """Stacks Sentinel-2 10m bands, crops using UTM coordinates, resamples, 
-    adds NDWI and NDVI and and saves as a .tif.
+def stack_crop_resample(safe_dir, output_tif, utm=None,resampling_factor=1):
+    """Stacks Sentinel-2 10m bands, crops using UTM coordinates, resamples and saves as a .tif.
     
     Args:
         safe_dir (str): Path to the Sentinel-2 .SAFE directory.
@@ -115,7 +114,8 @@ def stack_crop_resample_index(safe_dir, output_tif, utm=None,resampling_factor=1
     reference_raster = None
     left, top, right, bottom = utm
 
-    for band, res in band_map.items():
+    for band in ["B04", "B03","B02", "B08"]: # Save as R, G, B, NIR
+        res = band_map[band]
         band_path = glob.glob(os.path.join(img_data_path, res, f"*_{band}_*.jp2"))
         if not band_path:
             print(f"Band {band} not found, skipping...")
@@ -160,12 +160,12 @@ def stack_crop_resample_index(safe_dir, output_tif, utm=None,resampling_factor=1
     stacked_array = np.stack(stacked_bands, axis=0)
 
     # Calculate NDWI and NDVI
-    NDWI = get_index(stacked_array, 'NDWI')
+    """NDWI = get_index(stacked_array, 'NDWI')
     NDVI = get_index(stacked_array, 'NDVI')
     NDWI = NDWI.expand_dims(dim="band")
     NDVI = NDVI.expand_dims(dim="band")
 
-    stacked_array = np.vstack((stacked_array, NDWI, NDVI))
+    stacked_array = np.vstack((stacked_array, NDWI, NDVI))"""
 
     # Save output .tif file
     out_meta = reference_raster.meta.copy()
