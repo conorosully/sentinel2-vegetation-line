@@ -31,11 +31,12 @@ def main():
     parser.add_argument("--model_type", type=str, default="UNET", help="Type of model to train")
     parser.add_argument("--backbone_dataset", type=str, default="SimpleCNN", help="Backbone for the model (if applicable)",choices=["SimpleCNN", "ImageNet","BigEarthNet"])
     parser.add_argument("--freeze_backbone", action="store_true", help="Whether to freeze the backbone parameters")
-    parser.add_argument("--batch_size", type=int, default=32, help="Batch size for training")
-    parser.add_argument("--epochs", type=int, default=50, help="Number of epochs to train for")
+    parser.add_argument("--guidance",action="store_true", help="Whether to use guidance band or not")
+    parser.add_argument("--batch_size", type=int, default=64, help="Batch size for training")
+    parser.add_argument("--epochs", type=int, default=100, help="Number of epochs to train for")
     #parser.add_argument("--loss", type=str, default="BCEWithLogitsLoss", help="Loss function to use")
     #parser.add_argument("--lr", type=float, default=0.001, help="Learning rate for training")
-    parser.add_argument("--split", type=float, default=0.9, help="Train/Validation split")
+    parser.add_argument("--split", type=float, default=0.7, help="Train/Validation split")
     parser.add_argument("--early_stopping", type=int, default=-1, help="Number of epochs to wait before stopping training. -1 to disable.")
 
     parser.add_argument("--train_path", type=str, default="../data/training/", help="Path to the training data")
@@ -53,21 +54,27 @@ def main():
     print(vars(args))  # Print all arguments
 
     # Load data
-    train_loader, valid_loader = load_data(args)
-    data_sense_check(train_loader)
+    
 
     # Train the model
-    for loss in ["wBCE","DICE"]:
-        print(f"\n--- Training with Loss: {loss} ---")
-        args.loss = loss
+    for guidance in [True, False]:
+        print(f"\n--- Training with Guidance Band: {guidance} ---")
+        args.guidance = guidance
 
-        if args.backbone_dataset == "SimpleCNN":
-            train_model(train_loader, valid_loader, args)
-        else:
-            for freeze in [True, False]:
-                print(f"\n--- Training with Freeze Backbone: {freeze} ---")
-                args.freeze_backbone = freeze
+        train_loader, valid_loader = load_data(args)
+        data_sense_check(train_loader)
+        
+        for loss in ["wBCE","DICE"]:
+            print(f"\n--- Training with Loss: {loss} ---")
+            args.loss = loss
+
+            if args.backbone_dataset == "SimpleCNN":
                 train_model(train_loader, valid_loader, args)
+            else:
+                for freeze in [True, False]:
+                    print(f"\n--- Training with Freeze Backbone: {freeze} ---")
+                    args.freeze_backbone = freeze
+                    train_model(train_loader, valid_loader, args)
     
 
 def data_sense_check(loader):
@@ -77,9 +84,12 @@ def data_sense_check(loader):
     for i, (images, target) in enumerate(loader):
         print("Batch {}:".format(i))
         print("Image shape:", images.shape)
+        if images.shape[1] == 5:
+            print("Guidnance band unique values:", torch.unique(images[:, 4, :, :]))
         print("Min:", images.min(), "Max:", images.max())
         print("Target shape:", target.shape)
         print("Target unique values:", torch.unique(target))
+        print("Target %:", torch.sum(target) / target.numel())
 
         if i == 1:
             break  # Just check the first two batches
@@ -88,8 +98,9 @@ def data_sense_check(loader):
 
 # Classes
 class TrainDataset(torch.utils.data.Dataset):
-    def __init__(self, paths):
+    def __init__(self, paths,guidance=False):
         self.paths = paths
+        self.guidance = guidance
 
     def __getitem__(self, idx):
         """Get image and binary mask for a given index"""
@@ -97,18 +108,20 @@ class TrainDataset(torch.utils.data.Dataset):
         path = self.paths[idx]
         instance = np.load(path)
 
-        # Get spectral bands
-        bands = instance[0:4] # Blue, Green, Red, NIR
-        bands = bands.astype(np.float32) 
-
-        # Normalise bands
+        bands = instance[0:4] # Blue, Green, Red, NIR bands
         bands = utils.scale_bands(bands, satellite='sentinel')
+
+        if self.guidance:
+            # Use all 5 bands (Blue, Green, Red, NIR, Guidance)
+            bands = np.concatenate((bands, instance[4:5]), axis=0)  # Add Guidance band
+       
+        bands = bands.astype(np.float32) 
 
         # Convert to tensor
         bands = torch.tensor(bands)
 
         # Get target
-        mask = instance[4].astype(np.int8)  # Binary edge mask
+        mask = instance[-1].astype(np.int8)  # Binary edge mask
         target = torch.tensor(mask, dtype=torch.float32).unsqueeze(0)
 
         return bands, target
@@ -137,8 +150,8 @@ def load_data(args):
 
     # Create datasets
     split = int(args.split * len(paths))
-    train_data = TrainDataset(paths[:split])
-    valid_data = TrainDataset(paths[split:])
+    train_data = TrainDataset(paths[:split], guidance=args.guidance)
+    valid_data = TrainDataset(paths[split:], guidance=args.guidance)
 
     # Prepare data for PyTorch model
     train_loader = DataLoader(train_data, batch_size=args.batch_size, shuffle=True)
@@ -164,7 +177,11 @@ def initialize_model(args, lr):
     """Initialize the model, optimizer and criterion based on the specified model type"""
 
     out_channels = 1
-    n_bands = 4
+    if args.guidance:
+        # If using guidance band, we have 5 bands (Blue, Green, Red, NIR, Guidance)
+        n_bands = 5
+    else:
+        n_bands = 4
 
     if args.model_type == "UNET":
         model = U_Net(n_bands, out_channels)
@@ -181,6 +198,7 @@ def initialize_model(args, lr):
                                         freeze_backbone=args.freeze_backbone)
  
         model = HED(backbone=backbone, 
+                    in_channels=n_bands,
                     out_channels=out_channels)
     else:
         raise ValueError("Unsupported model type")
@@ -193,7 +211,7 @@ def initialize_model(args, lr):
         criterion = nn.BCEWithLogitsLoss()
 
     elif args.loss == "wBCE":
-        pos_weight = 183 # weight given to edge pixels
+        pos_weight = 166 # weight given to edge pixels
         pos_weight = torch.tensor(pos_weight, dtype=torch.float32).to(args.device)
         criterion = nn.BCEWithLogitsLoss(pos_weight=pos_weight)
 
@@ -247,7 +265,7 @@ def evaluate_model(model, valid_loader, criterion, device):
 def train_model(train_loader, valid_loader, args):
     """Train the model with different learning rates and save the best model"""
 
-    learning_rates = [0.1, 0.01, 0.001]
+    learning_rates = [0.1, 0.01, 0.001,0.0001]
     global_min_loss = np.inf # Compare across all learning rates
 
     for lr in learning_rates:

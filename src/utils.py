@@ -9,6 +9,10 @@ import glob
 import rasterio
 from rasterio.enums import Resampling
 from rasterio.windows import from_bounds
+from rasterio.features import rasterize
+
+from skimage.morphology import skeletonize
+from scipy.spatial import distance
 
 import cv2
 
@@ -232,3 +236,36 @@ def get_rgb(img, r=2,g=1,b=0, contrast=1):
     rgb = (rgb * 255).astype(np.uint8) 
 
     return rgb
+
+
+def thin_edge_map(edge_map):
+    """
+    Post-process a 2D binary edge map:
+    1. Apply thinning to reduce edge width to 1 pixel.
+    2. Connect nearby disjoint edge segments using interpolation.
+
+    Parameters:
+    - edge_map (np.ndarray): 2D binary array (values 0 or 1).
+    - connect_distance (int): Max pixel distance between endpoints to connect.
+
+    Returns:
+    - np.ndarray: Post-processed binary edge map (values 0 or 1).
+    """
+    # Step 1: Thinning
+    binary = edge_map > 0
+    thinned = skeletonize(binary).astype(np.uint8)
+
+    return thinned
+
+def get_line_mask(raster,line):
+    """
+    Get a mask of the line in the raster
+    """
+    line_mask = rasterize(
+        [line.geometry],
+        out_shape=raster.shape,
+        transform=raster.transform,
+        fill=0,
+        dtype='uint16'
+    )
+    return line_mask

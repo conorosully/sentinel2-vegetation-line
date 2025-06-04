@@ -22,14 +22,14 @@ class SideOutput(nn.Module):
         return x
 
 class HED(nn.Module):
-    def __init__(self, backbone, out_channels=1, input_channels=4, input_size=(144, 144)):
+    def __init__(self, backbone, out_channels=1, in_channels=4, input_size=(144, 144)):
         super().__init__()
         self.backbone = backbone
 
 
         # Do a dry forward pass to detect channel sizes
         with torch.no_grad():
-            dummy_input = torch.randn(1, input_channels, *input_size)
+            dummy_input = torch.randn(1, in_channels, *input_size)
             features = backbone(dummy_input)
             self.side_channels = [f.shape[1] for f in features]
 
@@ -106,7 +106,7 @@ class SimpleCNNBackbone(nn.Module):
         out5 = self.stage5(out4)  # [B, 512, H/16, W/16]
         return [out1, out2, out3, out4, out5]
     
-def get_ResNet50_BigEarthNet():
+def get_ResNet50_BigEarthNet(in_channels=4):
 
     with warnings.catch_warnings():
         warnings.simplefilter("ignore", UserWarning)
@@ -116,12 +116,10 @@ def get_ResNet50_BigEarthNet():
     
     backbone = backbone.model.vision_encoder
 
-    in_channels = 4  # Blue, Green, Red, NIR
-
     # Replace the first convolutional layer
     old_conv = backbone.conv1
     new_conv = nn.Conv2d(
-        in_channels=4,
+        in_channels=in_channels,
         out_channels=old_conv.out_channels,
         kernel_size=old_conv.kernel_size,
         stride=old_conv.stride,
@@ -137,6 +135,10 @@ def get_ResNet50_BigEarthNet():
         new_conv.weight[:, 1] = old_conv.weight[:, 1]  # Green (B3)
         new_conv.weight[:, 2] = old_conv.weight[:, 2]  # Red (B4) 
         new_conv.weight[:, 3] = old_conv.weight[:, 6]  # NIR (B8)
+        if in_channels == 5:
+            # We need a channel for guidance band
+            new_conv.weight[:, 4] = old_conv.weight.mean(dim=1)
+
 
     backbone.conv1 = new_conv
 
@@ -152,7 +154,7 @@ def get_ResNet50_BigEarthNet():
 
     
 
-def get_ResNet50_ImageNet():
+def get_ResNet50_ImageNet(in_channels=4):
     """
     Load a pretrained ResNet-50 model and modify the first conv layer 
     to accept 4 channels (BGR + NIR).
@@ -164,7 +166,6 @@ def get_ResNet50_ImageNet():
 
     # Modify the first conv layer if needed
 
-    in_channels = 4  # Blue, Green, Red, NIR
 
     # Replace the first convolutional layer
     old_conv = backbone.conv1
@@ -184,7 +185,8 @@ def get_ResNet50_ImageNet():
         new_conv.weight[:, 1] = old_conv.weight[:, 1]  # Green <- ResNet Green (channel 1)
         new_conv.weight[:, 2] = old_conv.weight[:, 0]  # Red   <- ResNet Red (channel 0)
         new_conv.weight[:, 3] = old_conv.weight.mean(dim=1)  # NIR  <- Avg(RGB) as a proxy
-
+        if in_channels == 5:
+            new_conv.weight[:, 4] = old_conv.weight.mean(dim=1)
 
     backbone.conv1 = new_conv
 
@@ -206,10 +208,10 @@ class ResNet50Backbone(nn.Module):
 
         if backbone_dataset == 'ImageNet':
              print("\nUsing ImageNet pretrained ResNet-50")
-             return_nodes, backbone = get_ResNet50_ImageNet()
+             return_nodes, backbone = get_ResNet50_ImageNet(in_channels)
         elif backbone_dataset == 'BigEarthNet':
             print("\nUsing BigEarthNet pretrained ResNet-50")
-            return_nodes, backbone = get_ResNet50_BigEarthNet()
+            return_nodes, backbone = get_ResNet50_BigEarthNet(in_channels)
         else:
             print("\nUsing SimpleCNN backbone")
              

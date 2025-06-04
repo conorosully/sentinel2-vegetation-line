@@ -169,11 +169,11 @@ def eval_metrics(targets, preds):
         r_precision.append(precision)
         r_recall.append(recall)
         r_f1.append(f1)
+        r_iou.append(iou)
 
         # Figure of Merit
         fom = calc_fom(pred, target)
         r_fom.append(fom)
-
 
 
     accuracy = np.mean(np.nan_to_num(r_accuracy, nan=0.0))
