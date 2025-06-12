@@ -285,7 +285,11 @@ def train_model(train_loader, valid_loader, args):
 
             if valid_loss < global_min_loss:
                 # Save the model with the best validation loss across all learning rates
-                model_name = f"{args.model_name}_{args.model_type}_{args.backbone_dataset}_{args.freeze_backbone}_{args.loss}.pth"
+                s1 = "frozen" if args.freeze_backbone else "trainable"
+                
+                s2 = "guided" if args.guidance else "unguided"
+                
+                model_name = f"{args.model_name}_{args.model_type}_{args.backbone_dataset}_{s1}_{s2}_{args.loss}.pth"
                 save_path = os.path.join(args.save_path, model_name)
                 torch.save(model.state_dict(), save_path)
                 print("Model saved (best across all LRs).")

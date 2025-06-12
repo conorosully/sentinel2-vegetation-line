@@ -40,6 +40,7 @@ def permutate_bands(img, bands):
 
 
 def get_preds(model, 
+              guidance,
               test_paths, 
               threshold=0.5,
               batch_size=10, 
@@ -48,7 +49,7 @@ def get_preds(model,
     
     """Get model predictions for a given dataloader"""
     
-    test_data = TrainDataset(test_paths)
+    test_data = TrainDataset(test_paths,guidance)
     test_loader = DataLoader(test_data, batch_size=batch_size, shuffle=False)
 
     sm = nn.Sigmoid() # Sigmoid activation function
@@ -193,44 +194,6 @@ def eval_metrics(targets, preds):
     }, {"accuracy": r_accuracy, "fom": r_fom}
 
 
-def show_preds(test_paths, preds, arr, n=20, show_edge=False):
-    """Show random predictions on test set"""
-
-    for i in range(n):
-        ri = np.random.randint(0, len(test_paths))
-        test = np.load(test_paths[ri])
-        target = test[:, :, -2]
-        rgb = utils.rgb_from_stack(test)
-
-        fig, ax = plt.subplots(1, 3, figsize=(15, 5))
-        ax[0].imshow(rgb)
-        ax[0].set_title("RGB {}".format(ri))
-        ax[1].imshow(target)
-        ax[1].set_title("Mask")
-        ax[2].imshow(preds[ri])
-        ax[2].set_title("Accuracy: {:.2f}%".format(arr["accuracy"][ri] * 100))
-
-        for a in ax:
-            a.set_xticks([])
-            a.set_yticks([])
-        plt.show()
-
-        if show_edge:
-            target_edge = utils.edge_from_mask(target)
-            pred_edge = utils.edge_from_mask(preds[ri])
-
-            fig, ax = plt.subplots(1, 3, figsize=(15, 5))
-            ax[0].imshow(rgb)
-            ax[0].set_title("RGB {}".format(ri))
-            ax[1].imshow(target_edge)
-            ax[1].set_title("Mask")
-            ax[2].imshow(pred_edge)
-            ax[2].set_title("FOM: {:.4f}".format(arr["fom"][ri]))
-
-            for a in ax:
-                a.set_xticks([])
-                a.set_yticks([])
-            plt.show()
 
 
 def display_metrics(metrics, arr, hist=True):
@@ -252,38 +215,6 @@ def display_metrics(metrics, arr, hist=True):
         ax[1].set_ylabel("Frequency", size=15)
 
 
-def select_pixels_near_edge(edge, distance_threshold=10):
-    """Select pixels near the coastline edge"""
-    # Find the distance from each pixel to the nearest edge pixel
-
-    distance_map = distance_transform_edt(1 - edge)
-
-    # Select pixels that are less than the specified distance_threshold away from an edge
-    selected_pixels = np.where(distance_map <= distance_threshold, True, np.nan)
-
-    return selected_pixels
-
-
-def get_coastline_pixels(targets, preds):
-    """Return only pixels near the coastline"""
-    new_targets = targets.copy()
-    new_targets = np.array(new_targets)
-    new_targets = new_targets.astype(np.float32)
-
-    new_preds = preds.copy()
-    new_preds = np.array(new_preds)
-    new_preds = new_preds.astype(np.float32)
-
-    for i in range(len(targets)):
-        edge = utils.edge_from_mask(targets[i])
-        selected_pixels = select_pixels_near_edge(edge, distance_threshold=10)
-
-        new_targets[i] = new_targets[i] * selected_pixels
-        new_preds[i] = new_preds[i] * selected_pixels
-
-    return new_targets, new_preds
-
-
 def plot_importance(importance, channels_, label=None, save=None):
     """Plot feature importance"""
     fig, ax = plt.subplots(figsize=(10, 4))
@@ -300,3 +231,31 @@ def plot_importance(importance, channels_, label=None, save=None):
     ax.set_yscale("log")
 
     plt.yticks(size=15)
+
+def get_combined_pred(model, meta_data, points_dict,path, batch_size=1):
+    """
+    Get predictions for all test images.
+    Args:
+        model: The trained model.
+        test_paths (list): List of paths to test images.
+        batch_size (int): Batch size for prediction.
+    Returns:
+        list: List of predictions for each image.
+    """
+    
+    image = np.load(path)
+
+    ID = os.path.basename(path).split('.')[0]
+    points = points_dict[ID]
+
+    crop_paths, start_points = utils.get_iterative_crops(image, points)
+    target_crops, pred_crops = get_preds(model,meta_data["guidance"], crop_paths, batch_size=1)
+
+    combined_pred = utils.combine_crops(pred_crops, start_points, image)
+    combined_target = utils.combine_crops(target_crops, start_points, image)
+
+    assert np.array_equal(combined_target, image[-1]), "Combined target does not match original image target"
+
+    processed_pred = utils.thin_edge_map(combined_pred)
+
+    return image, processed_pred

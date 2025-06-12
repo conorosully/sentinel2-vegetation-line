@@ -33,8 +33,6 @@ class HED(nn.Module):
             features = backbone(dummy_input)
             self.side_channels = [f.shape[1] for f in features]
 
-        print(f"Side channels: {self.side_channels}\n")
-
         # Create side output blocks with correct input channels
         self.side1 = SideOutput(in_channels=self.side_channels[0], out_channels=out_channels)
         self.side2 = SideOutput(in_channels=self.side_channels[1], out_channels=out_channels)
@@ -207,13 +205,9 @@ class ResNet50Backbone(nn.Module):
         super(ResNet50Backbone, self).__init__()
 
         if backbone_dataset == 'ImageNet':
-             print("\nUsing ImageNet pretrained ResNet-50")
              return_nodes, backbone = get_ResNet50_ImageNet(in_channels)
         elif backbone_dataset == 'BigEarthNet':
-            print("\nUsing BigEarthNet pretrained ResNet-50")
             return_nodes, backbone = get_ResNet50_BigEarthNet(in_channels)
-        else:
-            print("\nUsing SimpleCNN backbone")
              
          # Optionally freeze backbone parameters
         if freeze_backbone:
@@ -222,10 +216,7 @@ class ResNet50Backbone(nn.Module):
             # Unfreeze the first conv layer as it has been modified
             for param in backbone.conv1.parameters():
                 param.requires_grad = True
-            print("Backbone has been frozen.")
-        else:
-            print("Backbone is trainable.")
-
+  
         # Create extractor
         with warnings.catch_warnings():
             warnings.simplefilter("ignore", UserWarning)
@@ -235,7 +226,6 @@ class ResNet50Backbone(nn.Module):
         features = self.backbone(x)
         return [features['out1'], features['out2'], features['out3'],
                 features['out4'], features['out5']]
-
 
 
 class EfficientNetBackbone(nn.Module):

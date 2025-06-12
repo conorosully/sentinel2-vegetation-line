@@ -6,6 +6,10 @@ import matplotlib.pyplot as plt
 import os
 import glob
 
+import torch
+import network_unet as unet
+import network_hed as hed
+
 import rasterio
 from rasterio.enums import Resampling
 from rasterio.windows import from_bounds
@@ -269,3 +273,120 @@ def get_line_mask(raster,line):
         dtype='uint16'
     )
     return line_mask
+
+def get_model(model_path):
+
+    model_name = os.path.basename(model_path)
+
+    # Get metadata
+    name_split = model_name.split('_')
+    date = name_split[1]
+    model_type = name_split[2]
+    backbone_type = name_split[3]
+    freeze_backbone = name_split[4]
+
+    guidance = name_split[5]
+    if guidance == 'guided':
+        guidance = True
+        in_channels = 5  # 4 input channels + 1 guidance channel
+    else:
+        guidance = False
+        in_channels = 4
+
+    loss_function = name_split[6].split('.')[0]  # Remove file extension
+    device = torch.device('mps')  #UPDATE
+
+    # Load model
+    if model_type == 'unet':
+        pass
+    elif model_type == 'HED':
+        if backbone_type == 'SimpleCNN':
+            backbone = hed.SimpleCNNBackbone(in_channels=in_channels)
+        else:
+            # Use ResNet50 backbone for ImageNet or BigEarthNet
+            backbone = hed.ResNet50Backbone(in_channels=in_channels,
+                                        backbone_dataset=backbone_type)
+    
+        model = hed.HED(backbone=backbone, 
+                        in_channels=in_channels,
+                        out_channels=1)
+
+    state_dict = torch.load(model_path, map_location=torch.device('cpu') )
+    model.load_state_dict(state_dict)
+    model.eval()
+    model.to(device)
+
+    meta_data = {
+        'name': model_name,
+        'date': date,
+        'arcitecture': model_type,
+        'backbone': backbone_type,
+        'freeze_backbone': freeze_backbone,
+        'guidance': guidance,
+        'loss_function': loss_function
+    }
+
+    return model, meta_data
+
+def get_iterative_crops(image, points, crop_size=144,temp_location="../data/SIVE/crops/"):
+    """
+    Get crops from the image based on the points provided.
+    The crops are centered around the points and have a fixed size.
+    Args:
+        image (numpy.ndarray): The input image from which to extract crops.
+        points (list of tuples): List of (x, y) coordinates around which to crop.
+        crop_size (int): The size of the crops to extract (assumed square).
+    """
+   
+    os.makedirs(temp_location, exist_ok=True)
+
+    crop_paths = []
+    start_points = []
+    count = 0
+    for key in points:
+        for point in points[key]:
+            x, y = point
+        
+            x_start = max(0, x - crop_size // 2)
+            x_end = min(image.shape[2], x + crop_size // 2)
+            y_start = max(0, y - crop_size // 2)
+            y_end = min(image.shape[1], y + crop_size // 2)
+
+            crop = image[:,y_start:y_end, x_start:x_end]
+            assert crop.shape == (6,crop_size, crop_size), f"Crop shape mismatch: {crop.shape} != ({crop_size}, {crop_size})"
+
+            # Save the crop to a temporary location
+            # We do this as it is easier to use existing code that expects file paths
+            # aka too lazy to change the code
+            crop_path = os.path.join(temp_location, f"crop_{count+1}.npy")
+            np.save(crop_path, crop)
+            crop_paths.append(crop_path)
+            start_points.append((x_start, y_start))
+            count += 1
+    
+    return crop_paths,start_points
+
+def combine_crops(crop_preds, start_points, image,crop_size=144):
+    """
+    Combine crops into a single image.
+    Args:
+        crop_paths (list of str): List of paths to the crop files.
+        start_points (list of tuples): List of (x_start, y_start) coordinates for each crop.
+        image_shape (tuple): Shape of the original image to fit the crops into.
+    Returns:
+        numpy.ndarray: Combined image with crops placed at their respective positions.
+    """
+    H = image.shape[1]
+    W = image.shape[2]
+    combined_pred = np.zeros((H, W), dtype=np.float32)
+
+    for i, crop_pred in enumerate(crop_preds):
+        x_start, y_start = start_points[i]
+        combined_pred[ y_start:y_start+crop_size, x_start:x_start+crop_size] += crop_pred
+    combined_pred= np.clip(combined_pred, 0, 1)
+
+    assert combined_pred.shape == (H, W), f"Combined image shape mismatch: {combined_pred.shape} != ({H}, {W})"
+    assert np.all(combined_pred >= 0) and np.all(combined_pred <= 1), "Combined image values out of bounds [0, 1]"
+
+    
+    return combined_pred
