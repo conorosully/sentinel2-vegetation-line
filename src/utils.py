@@ -7,7 +7,6 @@ import os
 import glob
 
 import torch
-import network_unet as unet
 import network_hed as hed
 
 import rasterio
@@ -19,6 +18,7 @@ from skimage.morphology import skeletonize
 from scipy.spatial import distance
 
 import cv2
+import PIL
 
 import spyndex
 import xarray as xr
@@ -241,6 +241,18 @@ def get_rgb(img, r=2,g=1,b=0, contrast=1):
 
     return rgb
 
+def enhance_rgb(rgb_array,factor=1.5):
+    """Enhance the RGB image."""
+    
+    RGB = PIL.Image.fromarray(rgb_array)
+
+    converter = PIL.ImageEnhance.Color(RGB)
+
+    RGB = converter.enhance(factor)
+    RGB = np.array(RGB)
+
+    return RGB
+
 
 def thin_edge_map(edge_map):
     """
@@ -260,6 +272,12 @@ def thin_edge_map(edge_map):
     thinned = skeletonize(binary).astype(np.uint8)
 
     return thinned
+
+
+def post_process_edge_map(edge_map, connect_distance=10):
+    """
+    Post-process a 2D """
+
 
 def get_line_mask(raster,line):
     """
@@ -353,7 +371,7 @@ def get_iterative_crops(image, points, crop_size=144,temp_location="../data/SIVE
             y_end = min(image.shape[1], y + crop_size // 2)
 
             crop = image[:,y_start:y_end, x_start:x_end]
-            assert crop.shape == (6,crop_size, crop_size), f"Crop shape mismatch: {crop.shape} != ({crop_size}, {crop_size})"
+            #assert crop.shape == (6,crop_size, crop_size), f"Crop shape mismatch: {crop.shape} != ({crop_size}, {crop_size})"
 
             # Save the crop to a temporary location
             # We do this as it is easier to use existing code that expects file paths

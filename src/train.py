@@ -12,10 +12,8 @@ import os
 
 import torch
 import torch.nn as nn
-import torchvision
 from torch.utils.data import DataLoader
 
-from network_unet import U_Net, AttU_Net
 from network_hed import HED, SimpleCNNBackbone, ResNet50Backbone
 
 import utils

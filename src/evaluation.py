@@ -2,7 +2,6 @@ from scipy.ndimage import distance_transform_edt
 import matplotlib.pyplot as plt
 import numpy as np
 from train import *  # load dataset and model classes
-import argparse
 
 import utils
 
@@ -232,7 +231,8 @@ def plot_importance(importance, channels_, label=None, save=None):
 
     plt.yticks(size=15)
 
-def get_combined_pred(model, meta_data, points_dict,path, batch_size=1):
+
+def get_combined_pred(model, meta_data, points_dict,path, batch_size=1,post_process=True):
     """
     Get predictions for all test images.
     Args:
@@ -256,6 +256,9 @@ def get_combined_pred(model, meta_data, points_dict,path, batch_size=1):
 
     assert np.array_equal(combined_target, image[-1]), "Combined target does not match original image target"
 
-    processed_pred = utils.thin_edge_map(combined_pred)
+    if post_process:
+        processed_pred = utils.thin_edge_map(combined_pred)
+    else:
+        processed_pred = combined_pred
 
     return image, processed_pred
