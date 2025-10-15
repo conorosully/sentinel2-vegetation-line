@@ -16,6 +16,8 @@ We have used the following dataset in our analysis:
  The data is available under the Creative Commons Attribution 4.0 International license.
 
 ## Code Files
+- `demo.ipynb` demonstration of the best SimpleCNN model. 
+  
 You can find the following files in the src folder:
 
 - `0_process_rasters.ipynb` Stack Sentinel-2 scenes, Guidance band and vegetation lines so they can be used to create a modelling dataset.
