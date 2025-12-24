@@ -84,12 +84,15 @@ def get_preds(model,
             probs =[np.array(p[pos]) for p in probs]
 
             #apply thresgold to all pixels
-            preds = []
-            for p in probs:
-                pred = np.zeros_like(p)
-                pred[p>threshold]=1
-                preds.append(pred)
-            preds = np.array(preds)
+            if threshold is not None:
+                preds = []
+                for p in probs:
+                    pred = np.zeros_like(p)
+                    pred[p>threshold]=1
+                    preds.append(pred)
+                preds = np.array(preds)
+            else:
+                preds = probs
             
             # Get model predictions
             targets = [np.array(t[pos]) for t in target]
@@ -232,7 +235,12 @@ def plot_importance(importance, channels_, label=None, save=None):
     plt.yticks(size=15)
 
 
-def get_combined_pred(model, meta_data, points_dict,path, batch_size=1,post_process=True):
+def get_combined_pred(model, 
+                      meta_data, 
+                      points_dict,path,
+                        batch_size=1,
+                        post_process=True,
+                        threshold=0.5):
     """
     Get predictions for all test images.
     Args:
@@ -249,10 +257,27 @@ def get_combined_pred(model, meta_data, points_dict,path, batch_size=1,post_proc
     points = points_dict[ID]
 
     crop_paths, start_points = utils.get_iterative_crops(image, points)
-    target_crops, pred_crops = get_preds(model,meta_data["guidance"], crop_paths, batch_size=1)
+    target_crops, pred_crops = get_preds(model,meta_data["guidance"], crop_paths, batch_size=1, threshold=threshold)
+    
+    if threshold is not None:
+        #In this case we return the maximum binary prediction. That is if a pixel is predicted
+        #as edge in any crop then it is an edge in the final prediction
+        combined_pred = utils.combine_crops(pred_crops, start_points, image,binary=True)
+    else:
+        #In this case we will return summed probabilities
+        combined_pred = utils.combine_crops(pred_crops, start_points, image,binary=False)
 
-    combined_pred = utils.combine_crops(pred_crops, start_points, image)
-    combined_target = utils.combine_crops(target_crops, start_points, image)
+        #We must count the number of times each pixel occurs in the prediction
+        counts = utils.count_crops(pred_crops, start_points, image)
+
+        #Set counts to 1 where zero to avoid division by zero
+        counts[counts==0]=1
+
+        # We must scale the combined prediction by the counts
+        combined_pred = combined_pred / counts
+
+
+    combined_target = utils.combine_crops(target_crops, start_points, image,binary=True)
 
     assert np.array_equal(combined_target, image[-1]), "Combined target does not match original image target"
 
@@ -260,5 +285,6 @@ def get_combined_pred(model, meta_data, points_dict,path, batch_size=1,post_proc
         processed_pred = utils.thin_edge_map(combined_pred)
     else:
         processed_pred = combined_pred
+
 
     return image, processed_pred

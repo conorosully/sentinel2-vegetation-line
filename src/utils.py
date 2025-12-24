@@ -384,7 +384,7 @@ def get_iterative_crops(image, points, crop_size=144,temp_location="../data/SIVE
     
     return crop_paths,start_points
 
-def combine_crops(crop_preds, start_points, image,crop_size=144):
+def combine_crops(crop_preds, start_points, image,crop_size=144,binary=True):
     """
     Combine crops into a single image.
     Args:
@@ -399,12 +399,38 @@ def combine_crops(crop_preds, start_points, image,crop_size=144):
     combined_pred = np.zeros((H, W), dtype=np.float32)
 
     for i, crop_pred in enumerate(crop_preds):
+        # If there is a threhsold tthen these will all be binary predictions
+        # if no threshold then these will be probabilistic predictions and we will need to account 
+        # for overlapping predictions using the count_crops fucntion
         x_start, y_start = start_points[i]
         combined_pred[ y_start:y_start+crop_size, x_start:x_start+crop_size] += crop_pred
-    combined_pred= np.clip(combined_pred, 0, 1)
+    if binary:
+        # Clipping to 0 and 1 to avoid values >1 in overlapping regions
+        combined_pred= np.clip(combined_pred, 0, 1)
 
     assert combined_pred.shape == (H, W), f"Combined image shape mismatch: {combined_pred.shape} != ({H}, {W})"
-    assert np.all(combined_pred >= 0) and np.all(combined_pred <= 1), "Combined image values out of bounds [0, 1]"
+    #assert np.all(combined_pred >= 0) and np.all(combined_pred <= 1), "Combined image values out of bounds [0, 1]"
 
-    
     return combined_pred
+
+def count_crops(crop_preds, start_points, image,crop_size=144):
+    """
+    Count the number of times each pixel is covered by crops.
+    Args:
+        crop_paths (list of str): List of paths to the crop files.
+        start_points (list of tuples): List of (x_start, y_start) coordinates for each crop.
+        image_shape (tuple): Shape of the original image to fit the crops into.
+    Returns:
+        numpy.ndarray: Count image with number of times each pixel is covered.
+    """
+    H = image.shape[1]
+    W = image.shape[2]
+    count_image = np.zeros((H, W), dtype=np.float32)
+
+    for i, crop_pred in enumerate(crop_preds):
+        x_start, y_start = start_points[i]
+        count_image[ y_start:y_start+crop_size, x_start:x_start+crop_size] += 1
+
+    assert count_image.shape == (H, W), f"Count image shape mismatch: {count_image.shape} != ({H}, {W})"
+    
+    return count_image
