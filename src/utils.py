@@ -274,6 +274,35 @@ def thin_edge_map(edge_map):
     return thinned
 
 
+def get_max_pos(edge_map, location, buffer=20):
+    """Find the bounding box of the detected edge map, with a small buffer, so that
+    predictions can be cropped tightly around the vegetation line for visualization.
+    Returns:
+        x1: minimum x position of an edge pixel (minus buffer)
+        x2: maximum x position of an edge pixel (plus buffer)
+        y1: minimum y position of an edge pixel (minus buffer)
+        y2: maximum y position of an edge pixel (plus buffer)
+    """
+
+    edge_pixels = np.argwhere(edge_map)
+
+    x1 = np.min(edge_pixels[:, 1]) - buffer
+    x2 = np.max(edge_pixels[:, 1]) + buffer
+    y1 = np.min(edge_pixels[:, 0]) - buffer
+    y2 = np.max(edge_pixels[:, 0]) + buffer
+
+    if location in ["Portmarnock"]:
+        # Adjust the coordinates for Portmarnock
+        x1 -= 50
+        x2 += 50
+    if location in ["Tramore"]:
+        # Adjust the coordinates for Tramore
+        y1 -= 50
+        y2 += 50
+
+    return x1, x2, y1, y2
+
+
 def post_process_edge_map(edge_map, connect_distance=10):
     """
     Post-process a 2D """
