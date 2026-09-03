@@ -3,7 +3,7 @@ Detecting sub-pixel changes in the coastal vegetation line with Sentinel-2 image
 
 This repository contains the code required to reproduce the results in the conference paper:
 
-> [coming soon]
+> C. O'Sullivan, X. Monteys and S. Dev, "Detecting Subpixel Changes in the Coastal Vegetation Line With Sentinel-2 Imagery," in IEEE Journal of Selected Topics in Applied Earth Observations and Remote Sensing, vol. 19, pp. 10421-10437, 2026, doi: 10.1109/JSTARS.2026.3661632. [available here](https://ieeexplore.ieee.org/abstract/document/11372985).
 
 This code is only for academic and research purposes. Please cite the above paper if you intend to use whole/part of the code. 
 
